@@ -2,16 +2,32 @@ import networkx as nx
 import pandas as pd
 import math
 import os
-import itertools
+
+def format_huge_number(log_val):
+    """
+    Utilitaire : Convertit un logarithme naturel (ln) en format scientifique A x 10^B.
+    Permet d'afficher des nombres trop grands pour être calculés directement.
+    """
+    if log_val == 0: return "1"
+    log10_val = log_val / math.log(10)
+    exposant_b = int(log10_val)
+    reste = log10_val - exposant_b
+    coefficient_a = 10**reste
+    return f"{coefficient_a:.3f} x 10^{exposant_b}"
 
 class FareyMethodAnalyzer:
     def __init__(self):
+        # Utilisation de MultiGraph pour supporter les arêtes parallèles temporaires
         self.G = nx.MultiGraph()
         self.log_tau = 0.0  # On travaille en Log pour éviter l'overflow
         self.initial_node_count = 0
         self.history = []
 
     def load_snap_data(self, filepath):
+        """
+        Charge un fichier de données SNAP (.edges).
+        Initialise tous les poids (conductances) à 1.0 comme spécifié dans la méthodologie.
+        """
         print(f"Chargement : {filepath} ...")
         try:
             df = pd.read_csv(filepath, sep='\s+', header=None, names=['u', 'v'])
@@ -28,9 +44,13 @@ class FareyMethodAnalyzer:
 
     # --- ALGORITHME 1 : Parallel Edge ---
     def algo_parallel(self):
-        """ Fusionne les arêtes multiples """
+        """
+        Algorithme 1 : Transformation des Arêtes Parallèles.
+        Fusionne plusieurs arêtes reliant les deux mêmes nœuds (u, v) en une seule arête.
+        Le nouveau poids est la SOMME des poids individuels (Loi des conductances en parallèle).
+        """
         has_changed = False
-        # Optimisation : on ne scanne que les nœuds ayant des arêtes multiples
+        # On itère sur les nœuds pour trouver ceux qui ont des voisins connectés plusieurs fois
         for u in list(self.G.nodes()):
             for v in set(self.G.neighbors(u)):
                 if u >= v: continue
@@ -45,13 +65,20 @@ class FareyMethodAnalyzer:
 
     # --- ALGORITHME 2 : Serial Edge ---
     def algo_serial(self):
-        """ Supprime les nœuds de degré 2 """
+        """
+        Algorithme 2 : Transformation des Arêtes en Série.
+        Supprime un nœud de degré 2 et fusionne ses deux voisins.
+        Si u --(a)-- node --(b)-- v, alors u --(c)-- v.
+        Le nouveau poids c est calculé par la formule : (a * b) / (a + b).
+        Met à jour l'invariant Tau en ajoutant ln(a + b).
+        """
         has_changed = False
         nodes = list(self.G.nodes())
         for node in nodes:
             if not self.G.has_node(node): continue
             if self.G.degree(node) == 2:
                 neighbors = list(self.G.neighbors(node))
+                # Vérification qu'il s'agit bien de 2 voisins distincts (pas de boucle)
                 if len(set(neighbors)) == 2:
                     u, v = neighbors[0], neighbors[1]
                     try:
@@ -71,7 +98,13 @@ class FareyMethodAnalyzer:
 
     # --- ALGORITHME 3 : Wye-Delta (Star-Mesh pour n=3) ---
     def algo_wye_delta(self):
-        """ Transforme un nœud de degré 3 """
+        """
+        Algorithme 3 : Transformation Wye-Delta (Étoile vers Triangle).
+        Transforme un nœud de degré 3 en connectant ses 3 voisins entre eux (Triangle).
+        Les nouveaux poids sont calculés selon : x = (a*b)/S, y = (a*c)/S, z = (b*c)/S.
+        Où S = a + b + c.
+        Met à jour Tau en ajoutant ln(S).
+        """
         for node in list(self.G.nodes()):
             if not self.G.has_node(node): continue
             if self.G.degree(node) == 3:
@@ -99,8 +132,11 @@ class FareyMethodAnalyzer:
     # --- ALGORITHME 5 : Star-Mesh (LA SOLUTION POUR GRAPHES DENSES) ---
     def algo_star_mesh(self):
         """
-        Généralisation pour degré > 3
-        Indispensable pour vos données SNAP qui ont des degrés élevés.
+        Algorithme 5 : Transformation Star-Mesh (Étoile vers Maillage).
+        Généralisation de Wye-Delta pour les nœuds de degré k > 3.
+        Supprime le nœud central et crée une clique (maillage complet) entre tous ses voisins.
+        Chaque nouvelle arête (u, v) a pour poids : (w_u * w_v) / Somme_des_poids.
+        Indispensable pour réduire les graphes denses (réseaux sociaux).
         """
         # Stratégie : On prend le nœud avec le PLUS PETIT degré (>3) pour limiter l'explosion des arêtes
         candidates = [n for n in self.G.nodes() if self.G.degree(n) > 3]
@@ -158,6 +194,13 @@ class FareyMethodAnalyzer:
 
     # --- ALGORITHME 6 : MAIN LOOP ---
     def run_analysis(self):
+        """
+        Exécute la boucle de réduction itérative selon l'ordre de priorité :
+        1. Parallèle (Nettoyage)
+        2. Série (Simplification rapide)
+        3. Wye-Delta (Structure locale)
+        4. Star-Mesh (Déblocage des nœuds denses)
+        """
         print("--- Début de l'analyse par Transformations ---")
         iteration = 0
         while True:
@@ -201,6 +244,7 @@ class FareyMethodAnalyzer:
         return final_tau
 
     def calculate_entropy(self):
+        """ Calcule l'entropie asymptotique : Rho = ln(Tau) / N """
         if self.initial_node_count == 0: return 0
         return self.log_tau / self.initial_node_count
 
@@ -220,11 +264,12 @@ if __name__ == "__main__":
     # Calcul
     log_tau = analyzer.run_analysis()
     rho = analyzer.calculate_entropy()
-    
+    nombre_arbres_lisible = format_huge_number(log_tau)
     print("\n" + "="*40)
     print("      RÉSULTATS FINAUX")
     print("="*40)
     print(f"Log(Tau) : {log_tau:.4f}")
+    print(f"Nombre d'arbres est.  : {nombre_arbres_lisible}")
     print(f"Entropie (Rho) : {rho:.4f}")
     print(f"Farey (Ref)    : 0.9457")
     
