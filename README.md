@@ -1,4 +1,4 @@
-# Network Complexity Analyzer 🕸️📊
+# Network Complexity Analyzer
 
 A scientific Python application for the structural analysis of complex networks (social, biological, communication systems).
 
@@ -10,7 +10,7 @@ This tool calculates **Complexity (Tau)** and **Structural Entropy (Rho)** using
 
 ---
 
-## 📚 Theoretical Background & Graph Theory
+##  Theoretical Background & Graph Theory
 
 ### 1. The Core Metric: Spanning Trees ($\tau$)
 The fundamental measure used in this analysis is the number of **Spanning Trees** ($\tau$).
@@ -24,7 +24,7 @@ According to the research by *Mokhlissi et al.*, the asymptotic entropy of gener
 
 ---
 
-## ⚡ From Physics to Algorithms: The Electrical Analogy
+##  From Physics to Algorithms: The Electrical Analogy
 
 Why do we use terms like "Conductance", "Series", or "Parallel" for abstract graphs?
 
@@ -42,7 +42,7 @@ The tool dynamically applies reduction transformations described in the methodol
 
 ---
 
-## ⚙️ Technical Architecture
+##  Technical Architecture
 
 ### Tech Stack
 * **Python 3.x**: Core logic.
@@ -58,7 +58,7 @@ The engine uses a priority queue system to optimize convergence speed:
 
 ---
 
-## 🚀 Installation & Usage
+##  Installation & Usage
 
 ### Prerequisites
 ```bash
