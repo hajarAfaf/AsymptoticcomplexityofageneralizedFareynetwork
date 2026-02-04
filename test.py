@@ -2,6 +2,9 @@ import networkx as nx
 import pandas as pd
 import math
 import os
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 def format_huge_number(log_val):
     """
@@ -16,32 +19,74 @@ def format_huge_number(log_val):
     return f"{coefficient_a:.3f} x 10^{exposant_b}"
 
 class FareyMethodAnalyzer:
-    def __init__(self):
+    def __init__(self, logger_func=None):
         # Utilisation de MultiGraph pour supporter les arêtes parallèles temporaires
         self.G = nx.MultiGraph()
         self.log_tau = 0.0  # On travaille en Log pour éviter l'overflow
         self.initial_node_count = 0
-        self.history = []
-
+        self.logger = logger_func
+    def log(self, message):
+        """Envoie le message à l'interface si elle existe, sinon print"""
+        if self.logger:
+            self.logger(message)
+        else:
+            print(message)
     def load_snap_data(self, filepath):
         """
         Charge un fichier de données SNAP (.edges).
         Initialise tous les poids (conductances) à 1.0 comme spécifié dans la méthodologie.
+        Charge un fichier. Supporte :
+        - 2 colonnes : u v (Poids par défaut = 1.0)
+        - 3 colonnes : u v w (Poids = w)
         """
-        print(f"Chargement : {filepath} ...")
+        self.log(f"Chargement du fichier : {os.path.basename(filepath)} ...")
         try:
-            df = pd.read_csv(filepath, sep='\s+', header=None, names=['u', 'v'])
+            try:
+                # Tentative de lecture avec poids
+                df = pd.read_csv(filepath, sep='\s+', header=None, engine='python')
+                num_cols = len(df.columns)
+            except:
+                num_cols = 0
+
             self.G.clear()
-            # Poids initial = 1.0 partout
-            edges = [(row['u'], row['v'], 1.0) for _, row in df.iterrows()]
+            edges = []
+
+            if num_cols >= 3:
+                self.log(" Format détecté : Graphe PONDÉRÉ (3 colonnes)")
+                # On suppose que les colonnes sont 0=u, 1=v, 2=weight
+                for _, row in df.iterrows():
+                    u, v = int(row[0]), int(row[1])
+                    w = float(row[2])
+                    if u != v and w > 0: # On ignore les poids nuls ou négatifs pour la conductance
+                        edges.append((u, v, w))
+            else:
+                self.log("Format détecté : Graphe NON PONDÉRÉ (poids=1.0)")
+                # Lecture standard u, v
+                df = pd.read_csv(filepath, sep='\s+', header=None, names=['u', 'v'])
+                for _, row in df.iterrows():
+                    u, v = row['u'], row['v']
+                    if u != v: 
+                        edges.append((u, v, 1.0))
+            
             self.G.add_weighted_edges_from(edges)
             
+            # Initialisation
             self.initial_node_count = self.G.number_of_nodes()
             self.log_tau = 0.0 
-            print(f"✅ Graphe chargé : {self.G.number_of_nodes()} nœuds, {self.G.number_of_edges()} arêtes.")
+            self.log(f" Graphe chargé : {self.G.number_of_nodes()} nœuds, {self.G.number_of_edges()} arêtes.")
+            return True
+            
         except Exception as e:
-            print(f"❌ Erreur : {e}")
-
+            self.log(f" Erreur : {e}")
+            return False
+    def get_first_edge_weight(self, u, v):
+        """Récupère le poids sans planter si l'index n'est pas 0"""
+        edge_data = self.G.get_edge_data(u, v)
+        if edge_data:
+            first_key = list(edge_data.keys())[0]
+            return edge_data[first_key]['weight']
+        return 0
+    
     # --- ALGORITHME 1 : Parallel Edge ---
     def algo_parallel(self):
         """
@@ -60,7 +105,6 @@ class FareyMethodAnalyzer:
                     self.G.remove_edges_from([(u, v, k) for k in edges])
                     self.G.add_edge(u, v, weight=total_weight)
                     has_changed = True
-        if has_changed: self.history.append("Réduction Parallèle")
         return has_changed
 
     # --- ALGORITHME 2 : Serial Edge ---
@@ -93,7 +137,6 @@ class FareyMethodAnalyzer:
                         self.G.add_edge(u, v, weight=wc)
                         has_changed = True
                     except KeyError: continue
-        if has_changed: self.history.append("Réduction Série")
         return has_changed
 
     # --- ALGORITHME 3 : Wye-Delta (Star-Mesh pour n=3) ---
@@ -123,8 +166,6 @@ class FareyMethodAnalyzer:
                         self.G.add_edge(n1, n2, weight=(a*b)/s)
                         self.G.add_edge(n1, n3, weight=(a*c)/s)
                         self.G.add_edge(n2, n3, weight=(b*c)/s)
-                        
-                        self.history.append(f"Wye-Delta (Node {node})")
                         return True # On retourne True pour re-nettoyer (Parallel)
                     except KeyError: continue
         return False
@@ -147,10 +188,8 @@ class FareyMethodAnalyzer:
         candidates.sort(key=lambda n: self.G.degree(n))
         node = candidates[0] # Le meilleur candidat
         
-        neighbors = list(self.G.neighbors(node))
-        # On s'assure que les voisins sont uniques
-        neighbors = list(set(neighbors))
-        degree = len(neighbors)
+        neighbors = [n for n in set(self.G.neighbors(node)) if n != node]
+        if len(neighbors) < 2: return False
         
         try:
             # 1. Calcul de la somme S (Algorithm 5, ligne 9)
@@ -159,7 +198,7 @@ class FareyMethodAnalyzer:
             total_s = 0.0
             for neighbor in neighbors:
                 # On prend la première arête dispo (normalement parallel edge a déjà nettoyé)
-                w = self.G[node][neighbor][0]['weight']
+                w = self.get_first_edge_weight(node, neighbor)
                 weights[neighbor] = w
                 total_s += w
             
@@ -184,12 +223,9 @@ class FareyMethodAnalyzer:
             
             # 5. Ajout des nouvelles arêtes
             self.G.add_weighted_edges_from(new_edges)
-            
-            self.history.append(f"Star-Mesh (Node {node}, Degré {degree})")
             return True
-            
         except Exception as e:
-            print(f"Erreur Star-Mesh sur nœud {node}: {e}")
+            self.log(f"Erreur Star-Mesh: {e}")
             return False
 
     # --- ALGORITHME 6 : MAIN LOOP ---
@@ -201,12 +237,12 @@ class FareyMethodAnalyzer:
         3. Wye-Delta (Structure locale)
         4. Star-Mesh (Déblocage des nœuds denses)
         """
-        print("--- Début de l'analyse par Transformations ---")
+        self.log("--- Début de l'analyse par Transformations ---")
         iteration = 0
         while True:
             iteration += 1
             if iteration % 10 == 0:
-                print(f"Iter {iteration} | Nœuds restants : {self.G.number_of_nodes()} | Arêtes : {self.G.number_of_edges()}")
+                self.log(f"Iter {iteration} | Nœuds restants : {self.G.number_of_nodes()} | Arêtes : {self.G.number_of_edges()}")
 
             # Condition d'arrêt
             if self.G.number_of_nodes() <= 2:
@@ -226,10 +262,8 @@ class FareyMethodAnalyzer:
             if self.algo_star_mesh(): continue
             
             # Si rien ne marche
-            print("Aucune transformation possible.")
+            self.log("Aucune transformation possible.")
             break
-            
-        print("--- Fin de la réduction ---")
         
         # Résultat final
         final_tau = self.log_tau
@@ -248,32 +282,180 @@ class FareyMethodAnalyzer:
         if self.initial_node_count == 0: return 0
         return self.log_tau / self.initial_node_count
 
-# --- MAIN ---
-if __name__ == "__main__":
-    analyzer = FareyMethodAnalyzer()
-    
-    # FICHIER A ANALYSER
-    mon_fichier = "24117694.edges"  
-    
-    # Création fichier test si absent
-    if not os.path.exists(mon_fichier):
-        with open(mon_fichier, "w") as f: f.write("1 2\n2 3\n3 1\n1 4")
+# --- 3. L'INTERFACE GRAPHIQUE (GUI) ---
+class FareyApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Network Complexity Analyzer")
+        self.root.geometry("950x700")
+        self.root.configure(bg="#F8F9FA")
+        
+        self.style_setup()
+        
+        self.filepath = tk.StringVar()
+        self.filepath.set("Aucun fichier sélectionné")
+        
+        self.create_widgets()
 
-    analyzer.load_snap_data(mon_fichier)
+    def style_setup(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure("Card.TFrame", background="#FFFFFF", relief="flat", borderwidth=0)
+        style.configure("Main.TFrame", background="#F8F9FA")
+        style.configure("Header.TLabel", background="#F8F9FA", foreground="#4A5568", font=("Segoe UI", 22, "bold"))
+        style.configure("SubHeader.TLabel", background="#FFFFFF", foreground="#4A5568", font=("Segoe UI", 12, "bold"))
+        style.configure("Path.TLabel", background="#FFFFFF", foreground="#000000", font=("Consolas", 10))
+        
+        # Boutons Baby Blue
+        style.configure("Action.TButton", font=("Segoe UI", 10, "bold"), background="#BA68C8", foreground="white", padding=10, borderwidth=0)
+        style.map("Action.TButton", background=[("active", "#F0A7DC")])
+        style.configure("Browse.TButton", font=("Segoe UI", 9), background="#E0E0E0", padding=6)
     
-    # Calcul
-    log_tau = analyzer.run_analysis()
-    rho = analyzer.calculate_entropy()
-    nombre_arbres_lisible = format_huge_number(log_tau)
-    print("\n" + "="*40)
-    print("      RÉSULTATS FINAUX")
-    print("="*40)
-    print(f"Log(Tau) : {log_tau:.4f}")
-    print(f"Nombre d'arbres est.  : {nombre_arbres_lisible}")
-    print(f"Entropie (Rho) : {rho:.4f}")
-    print(f"Farey (Ref)    : 0.9457")
-    
-    if rho > 0.9457:
-        print("CONCLUSION : Ton réseau est PLUS robuste que Farey.")
-    else:
-        print("CONCLUSION : Ton réseau est MOINS robuste que Farey.")
+    def create_widgets(self):
+        main = ttk.Frame(self.root, style="Main.TFrame")
+        main.pack(fill="both", expand=True, padx=25, pady=25)
+        ttk.Label(main, text="Analyseur de Complexité de Réseaux", style="Header.TLabel").pack(anchor="w", pady=(0, 25))
+
+        # Selection
+        card = ttk.Frame(main, style="Card.TFrame")
+        card.pack(fill="x", pady=(0, 20))
+        inner = tk.Frame(card, bg="#FFFFFF", padx=20, pady=15)
+        inner.pack(fill="x")
+        
+        ttk.Label(inner, text="1. Importation", style="SubHeader.TLabel").pack(anchor="w")
+        row = ttk.Frame(inner, style="Card.TFrame")
+        row.pack(fill="x", pady=10)
+        ttk.Button(row, text="Parcourir...", style="Browse.TButton", command=self.browse_file).pack(side="left")
+        tk.Label(row, textvariable=self.filepath, fg="#000000", bg="#FFFFFF").pack(side="left", padx=10)
+        
+        self.btn_run = ttk.Button(inner, text="▶ LANCER L'ANALYSE", style="Action.TButton", command=self.start_thread, state="disabled")
+        self.btn_run.pack(anchor="e")
+
+        # Logs
+        log_c = ttk.Frame(main, style="Card.TFrame")
+        log_c.pack(fill="both", expand=True, pady=(0, 20))
+        ttk.Label(log_c, text="Journal", style="SubHeader.TLabel", background="white").pack(anchor="w", padx=20, pady=10)
+        self.log_area = scrolledtext.ScrolledText(log_c, height=8, font=("Consolas", 10), bg="#EBE2E2", fg="#000000", relief="flat")
+        self.log_area.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+
+        # Resultats
+        res = ttk.Frame(main, style="Card.TFrame")
+        res.pack(fill="x")
+        res_in = tk.Frame(res, bg="white", padx=20, pady=15)
+        res_in.pack(fill="x")
+        ttk.Label(res_in, text="3. Résultats & Conclusion", style="SubHeader.TLabel").pack(anchor="w", pady=(0, 15))
+        grid = tk.Frame(res_in, bg="white")
+        grid.pack(fill="x")
+        self.create_card(grid, 0, "Log(Tau)", "Arbres couvrants", "lbl_tau", "lbl_trees")
+        self.create_card(grid, 1, "Entropie (Rho)", "Référence Farey: 0.9457", "lbl_rho", None, color="#89CFF0")
+        
+        self.lbl_concl = tk.Label(res_in, text="En attente...", font=("Segoe UI", 12, "bold"), 
+                                  bg="#F8F9FA", fg="#666666", pady=15, width=60)
+        self.lbl_concl.pack(pady=20)
+
+    def create_card(self, parent, col, title, subtitle, attr_val, attr_sub, color="#444"):
+        f = tk.Frame(parent, bg="#F8F9FA", padx=15, pady=10)
+        f.grid(row=0, column=col, sticky="ew", padx=5)
+        parent.grid_columnconfigure(col, weight=1)
+        tk.Label(f, text=title.upper(), font=("Segoe UI", 9, "bold"), fg="#888", bg="#F8F9FA").pack(anchor="w")
+        l = tk.Label(f, text="-", font=("Segoe UI", 16, "bold"), fg=color, bg="#F8F9FA")
+        l.pack(anchor="w")
+        setattr(self, attr_val, l)
+        if attr_sub:
+            l_sub = tk.Label(f, text=subtitle, font=("Segoe UI", 10), fg="#666", bg="#F8F9FA")
+            l_sub.pack(anchor="w")
+            setattr(self, attr_sub, l_sub)
+        else:
+            tk.Label(f, text=subtitle, font=("Segoe UI", 9, "italic"), fg="#888", bg="#F8F9FA").pack(anchor="w")
+
+    def log_message(self, msg):
+        """Fonction appelée par l'analyzer pour écrire dans la GUI"""
+        self.root.after(0, lambda: self._write(msg))
+
+    def _write(self, msg):
+        self.log_area.config(state='normal')
+        self.log_area.insert(tk.END, ">> " + msg + "\n")
+        self.log_area.see(tk.END)
+        self.log_area.config(state='disabled')
+
+    def browse_file(self):
+        filename = filedialog.askopenfilename(filetypes=[("Edges Files", "*.edges"), ("Text Files", "*.txt"), ("All Files", "*.*")])
+        if filename:
+            self.filepath.set(filename)
+            self.btn_run.config(state="normal")
+            self.log_message(f"Fichier sélectionné : {os.path.basename(filename)}")
+            self.lbl_tau.config(text="-")
+            self.lbl_trees.config(text="-")
+            self.lbl_rho.config(text="-")
+            self.lbl_concl.config(text="Prêt à lancer", fg="#6c757d", bg="#f8f9fa")
+            self.reset_display()
+    def reset_display(self):
+        """Réinitialise l'affichage des résultats avant un nouveau calcul"""
+        self.lbl_tau.config(text="-")
+        self.lbl_rho.config(text="-")
+        if hasattr(self, 'lbl_trees'): 
+            self.lbl_trees.config(text="Arbres couvrants")
+        self.lbl_concl.config(text="Prêt", bg="#F8F9FA", fg="#666")
+    def start_thread(self):
+        """Lance le calcul dans un thread séparé pour ne pas geler la fenêtre"""
+        if not self.filepath.get(): return
+        
+        self.btn_run.config(state="disabled")
+        self.log_area.config(state='normal')
+        self.log_area.delete(1.0, tk.END) # Clear logs
+        self.log_area.config(state='disabled')
+        
+        # Reset labels
+        self.lbl_tau.config(text="Log(Tau) : Calcul...")
+        self.lbl_rho.config(text="Entropie : Calcul...")
+        self.lbl_concl.config(text="Conclusion : ...", fg="#DC99DC", bg="#EAF6FF")
+
+        # Threading
+        thread = threading.Thread(target=self.run_process)
+        thread.daemon = True
+        thread.start()
+
+    def run_process(self):
+        analyzer = FareyMethodAnalyzer(logger_func=self.log_message)
+        success = analyzer.load_snap_data(self.filepath.get())
+        
+        if success:
+            log_tau = analyzer.run_analysis()
+            rho = analyzer.calculate_entropy()
+            
+            # Mise à jour de l'interface (depuis le thread)
+            self.root.after(0, lambda: self.show_results(log_tau, rho))
+        else:
+            self.root.after(0, lambda: messagebox.showerror("Erreur", "Impossible de lire le fichier."))
+            self.root.after(0, lambda: self.btn_run.config(state="normal"))
+
+    def show_results(self, log_tau, rho):
+        huge_num = format_huge_number(log_tau)
+        self.lbl_tau.config(text=f"Log(Tau) : {log_tau:.4f}")
+        if hasattr(self, 'lbl_trees'):
+                self.lbl_trees.config(text=f"Arbres: {huge_num}")
+        self.lbl_rho.config(text=f"Entropie (Rho) : {rho:.4f}")
+        
+        if rho > 0.9457:
+                msg = "CONCLUSION : PLUS robuste que Farey"
+                bg_col = "#C1E1C1"
+                fg_col = "#2E5D3B"
+        else:
+                msg = "CONCLUSION : MOINS robuste que Farey"
+                bg_col = "#EDB6C3" 
+                fg_col = "#7F2A41" 
+            
+        self.lbl_concl.config(text=msg, bg=bg_col, fg=fg_col)
+        self.lbl_concl.pack_forget() 
+        self.lbl_concl.pack(pady=20, fill="x", padx=20)
+            
+        # Force la mise à jour visuelle de la fenêtre
+        self.root.update_idletasks()
+        self.btn_run.config(state="normal", text="▶ LANCER L'ANALYSE")
+        messagebox.showinfo("Succès", "Analyse terminée !")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = FareyApp(root)
+    root.mainloop()
