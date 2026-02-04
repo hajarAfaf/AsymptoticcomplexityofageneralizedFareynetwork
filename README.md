@@ -1,74 +1,65 @@
-# Network Complexity Analyzer 
+# Network Complexity Analyzer 🕸️📊
 
-Une application scientifique en Python pour l'analyse structurelle de réseaux complexes (sociaux, biologiques, communication).
+A scientific Python application for the structural analysis of complex networks (social, biological, communication systems).
 
-Cet outil calcule la **complexité (Tau)** et l'**entropie structurelle (Rho)** en utilisant des méthodes de réduction de graphes inspirées de la théorie des circuits résistifs, permettant de contourner les limitations de complexité algorithmique classiques.
+This project is the practical software implementation of the research work presented in the paper:
+> **"Asymptotic complexity of a generalized Farey network"**
+> *By: Mokhlissi Raihana, Lotfi Dounia, Joyati Debnath, Soukayna Qarboua, El marraki Mohamed.*
 
-
-##  Contexte Théorique & Graph Theory
-
-### 1. Le Problème : Compter les Arbres Couvrants
-La mesure fondamentale utilisée ici est le nombre d'**Arbres Couvrants (Spanning Trees, $\tau$)**.
-En théorie des graphes, un arbre couvrant est un sous-graphe qui connecte tous les sommets sans former de cycles. Le nombre total de ces arbres est un indicateur direct de la **robustesse** et de la **complexité** du réseau (plus il y a d'arbres, plus le réseau est redondant et résistant aux pannes).
-
-### 2. Graphes Pondérés vs Non-Pondérés
-L'algorithme a été conçu pour être **universel** :
-
-* **Graphes Non-Pondérés (Topologiques)** :
-    * *Cas d'usage :* Réseaux sociaux (SNAP), interactions biologiques.
-    * *Traitement :* Chaque arête est considérée comme ayant un poids (conductance) unitaire $w = 1.0$.
-    * *Résultat :* $\tau$ représente le nombre exact de configurations topologiques possibles.
-
-* **Graphes Pondérés (Weighted Graphs)** :
-    * *Cas d'usage :* Réseaux routiers (distance), Internet (bande passante), réseaux neuronaux (force synaptique).
-    * *Traitement :* L'algorithme lit le poids $w$ fourni dans le fichier.
-    * *Résultat :* $\tau$ devient une "Complexité Pondérée", reflétant non seulement la connectivité mais aussi la "facilité" de passage à travers le réseau.
+This tool calculates **Complexity (Tau)** and **Structural Entropy (Rho)** using graph reduction methods inspired by resistive circuit theory, effectively bypassing classical algorithmic complexity limitations to analyze massive datasets (e.g., SNAP).
 
 ---
 
-##  De la Physique à l'Algorithme : L'Analogie Électrique
+## 📚 Theoretical Background & Graph Theory
 
-Pourquoi utilisons-nous des termes comme "Conductance", "Série" ou "Parallèle" pour des graphes abstraits ?
+### 1. The Core Metric: Spanning Trees ($\tau$)
+The fundamental measure used in this analysis is the number of **Spanning Trees** ($\tau$).
+In graph theory, a spanning tree is a subgraph that connects all vertices together without any cycles. The total number of these trees is a direct indicator of the network's **robustness**, **redundancy**, and **complexity**.
 
-### L'Isomorphisme Laplacien
-Il existe une identité mathématique stricte entre :
-1.  Le calcul des arbres couvrants d'un graphe (Théorème Arbre-Matrice de Kirchhoff).
-2.  Le calcul de la conductance équivalente d'un réseau de résistances électriques.
+### 2. Scientific Basis (The Reference Paper)
+According to the research by *Mokhlissi et al.*, the asymptotic entropy of generalized Farey networks converges to a specific constant. Our software allows researchers to verify if real-world networks (Twitter, Facebook, Power Grids) approach this **Farey Entropy** or diverge from it.
 
-Classiquement, pour calculer $\tau$, il faut calculer le déterminant de la **Matrice Laplacienne** du graphe.
-* **Problème :** Le calcul d'un déterminant est en $O(N^3)$. Pour un graphe de 100 000 nœuds (Twitter/Facebook), c'est impossible (la matrice ne tient même pas en mémoire RAM).
-
-### Notre Approche : La Réduction Itérative
-Au lieu d'attaquer la matrice entière, nous utilisons les **transformations locales**. Si on remplace les arêtes par des résistances électriques, on peut simplifier le graphe petit à petit sans changer sa "conductance totale" (qui est proportionnelle à $\tau$).
-
-L'outil applique dynamiquement ces lois de conservation :
-
-1.  **Loi des Nœuds (Transformation Étoile-Maillage / Star-Mesh)** : Un nœud central peut être supprimé si l'on reconnecte tous ses voisins entre eux en redistribuant les poids. C'est la généralisation de la transformation *Y-Δ (Wye-Delta)*.
-2.  **Loi des Conductances en Série** : $w_{eq} = (w_1 \cdot w_2) / (w_1 + w_2)$.
-3.  **Loi des Conductances en Parallèle** : $w_{eq} = w_1 + w_2$.
-
-Cette méthode permet de réduire des graphes massifs que l'approche matricielle classique ne pourrait jamais traiter.
+* **Unweighted Graphs (Topological):** Treated with unitary weight ($w=1$). Here, $\tau$ represents the exact number of topological configurations.
+* **Weighted Graphs:** The algorithm supports edge weights (conductance), allowing the analysis of flow capability, bandwidth, or connection strength.
 
 ---
 
-##  Architecture Technique
+## ⚡ From Physics to Algorithms: The Electrical Analogy
 
-### Stack Technologique
-* **Python 3.11** : Langage principal.
-* **NetworkX** : Structure de données (MultiGraph) pour manipuler les nœuds et les arêtes.
-* **Pandas** : Parsing haute performance des fichiers `.edges` (millions de lignes).
-* **Tkinter** : Interface graphique (GUI) native et réactive (Threadée).
+Why do we use terms like "Conductance", "Series", or "Parallel" for abstract graphs?
 
-### Algorithme de Réduction
-Le moteur d'analyse fonctionne par priorités pour optimiser la vitesse de convergence :
-1.  **Nettoyage (Parallel)** : Fusion immédiate des arêtes redondantes.
-2.  **Simplification Rapide (Series)** : Élimination des nœuds de passage (degré 2).
-3.  **Restructuration (Star-Mesh)** : Attaque des nœuds denses (Hubs) en commençant par les degrés les plus faibles pour limiter l'explosion combinatoire des arêtes.
+### The Laplacian Isomorphism
+There is a strict mathematical identity between calculating spanning trees (Kirchhoff's Matrix Tree Theorem) and calculating the equivalent conductance of an electrical resistor network.
+
+* **The Classical Problem:** Computing $\tau$ usually requires finding the determinant of the **Laplacian Matrix**. This operation is $O(N^3)$. For a graph with $N > 10,000$ nodes, this is computationally impossible.
+* **Our Solution:** Iterative Local Reduction.
+
+The tool dynamically applies reduction transformations described in the methodology, preserving the "Total Conductance" (Complexity) at every step:
+
+1.  **Star-Mesh Transformation (Node Elimination):** A generalization of the *Y-Δ (Wye-Delta)* transform. A central node is removed, and its neighbors form a weighted clique (mesh).
+2.  **Series Edge Law:** $w_{eq} = \frac{w_1 \cdot w_2}{w_1 + w_2}$ (Harmonic mean).
+3.  **Parallel Edge Law:** $w_{eq} = w_1 + w_2$ (Summation).
 
 ---
 
-## Installation et Utilisation
+## ⚙️ Technical Architecture
 
-### Prérequis
+### Tech Stack
+* **Python 3.x**: Core logic.
+* **NetworkX**: Data structures (`MultiGraph`) for efficient node/edge manipulation.
+* **Pandas**: High-performance parsing of `.edges` files (millions of rows).
+* **Tkinter**: Native GUI with **Multithreading** to prevent application freezing during intensive calculations.
+
+### Reduction Algorithm Priority
+The engine uses a priority queue system to optimize convergence speed:
+1.  **Cleanup (Parallel):** Immediate fusion of redundant edges.
+2.  **Simplification (Series):** Fast elimination of path nodes (degree 2).
+3.  **Restructuring (Star-Mesh):** Handling dense nodes (Hubs), prioritizing lower-degree nodes first to minimize edge explosion.
+
+---
+
+## 🚀 Installation & Usage
+
+### Prerequisites
 ```bash
 pip install networkx pandas
